@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Only verified household emails can read or write the board.
+    function member() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in ['you@example.com', 'partner@example.com'];
+    }
+    match /households/home { allow read, write: if member(); }
+    match /households/home/{rest=**} { allow read, write: if member(); }
+  }
+}
