@@ -298,7 +298,7 @@ function vToday(){
     var did=g.p.id==='any'?0:list.filter(function(k){var r=rec(date,k.id);return r&&r.by===g.p.id}).length;
     var txt=g.p.id==='any'?d+' of '+n+' done':(n?d+' of '+n+' assigned · ':'')+did+' done '+(date===t?'today':'this day')+' · ⭐ '+starsThisWeek(g.p.id)+' pts this week';
     var pct=g.p.id==='any'||n?(n?d/n:0):(list.length?did/list.length:0);
-    h+='<div class="who">'+ring(pct,g.p.color,(g.p.name||'?').charAt(0).toUpperCase())+'<div><b>'+esc(g.p.name)+'</b><span>'+txt+'</span></div></div>';
+    h+='<button class="who tap" data-action="person" data-pid="'+esc(g.p.id)+'" data-r="week" title="See '+esc(g.p.name)+'\u2019s chores and history">'+ring(pct,g.p.color,(g.p.name||'?').charAt(0).toUpperCase())+'<div><b>'+esc(g.p.name)+' <em class="chev">\u203A</em></b><span>'+txt+'</span></div></button>';
   });
   if(people().length>1){var me=getMe();h+='<label class="who" style="padding:10px 16px"><span>This device is</span><select data-change="me" style="border:1px solid var(--line);border-radius:10px;padding:6px 8px;background:var(--panel2);font-weight:800"><option value="">Choose\u2026</option>'+people().map(function(p){return '<option value="'+esc(p.id)+'"'+(me===p.id?' selected':'')+'>'+esc(p.name)+'</option>'}).join('')+'</select></label>'}
   h+='</div>';
@@ -369,14 +369,14 @@ function vUpcoming(){
 }
 function vPoints(){
   var t=today(), ppl=people();
-  function rowsFor(tot){var r=ppl.map(function(x){return {n:x.name,c:x.color,v:tot[x.id]||0}}); if(tot.any) r.push({n:'Unassigned',c:ANY,v:tot.any}); return r}
-  var periods=[['This week',weekStart(t)],['This month',t.slice(0,7)+'-01'],['This year',t.slice(0,4)+'-01-01']];
+  function rowsFor(tot){var r=ppl.map(function(x){return {id:x.id,n:x.name,c:x.color,v:tot[x.id]||0}}); if(tot.any) r.push({id:'any',n:'Unassigned',c:ANY,v:tot.any}); return r}
+  var periods=[['This week',weekStart(t),'week'],['This month',t.slice(0,7)+'-01','month'],['This year',t.slice(0,4)+'-01-01','year']];
   var h='<div class="ptsgrid">';
   periods.forEach(function(pd){
     var rows=rowsFor(pointsBetween(pd[1],t)), mx=Math.max.apply(null,rows.map(function(r){return r.v}).concat([1]));
     var top=Math.max.apply(null,rows.filter(function(r){return r.n!=='Unassigned'}).map(function(r){return r.v}).concat([0]));
     var leaders=rows.filter(function(r){return r.n!=='Unassigned'&&r.v===top&&top>0});
-    h+='<div class="card"><h3>'+pd[0]+'</h3>'+rows.map(function(r){return '<div class="pt-row"><span class="pt-name"><i style="background:'+r.c+'"></i>'+esc(r.n)+(leaders.length===1&&leaders[0]===r?' 👑':'')+'</span><span class="pt-bar"><i style="width:'+Math.round(r.v/mx*100)+'%;background:'+r.c+'"></i></span><b>'+r.v+'</b></div>'}).join('')+'</div>';
+    h+='<div class="card"><h3>'+pd[0]+'</h3>'+rows.map(function(r){return '<button class="pt-row tap" data-action="person" data-pid="'+esc(r.id)+'" data-r="'+pd[2]+'"><span class="pt-name"><i style="background:'+r.c+'"></i>'+esc(r.n)+(leaders.length===1&&leaders[0]===r?' 👑':'')+'</span><span class="pt-bar"><i style="width:'+Math.round(r.v/mx*100)+'%;background:'+r.c+'"></i></span><b>'+r.v+'</b></button>'}).join('')+'</div>';
   });
   h+='</div>';
   function chart(title,buckets){
@@ -442,6 +442,46 @@ function openTask(id){
   '<div class="actions">'+(isNew?'':'<button type="button" class="btn danger" data-action="del">Delete</button>')+'<div class="grow"></div><button type="button" class="btn" data-action="close">Cancel</button><button type="submit" class="btn primary">Save</button></div></form></div>';
   modalEl.innerHTML=h;
 }
+function rangeStart(r){var t=today();return r==='year'?t.slice(0,4)+'-01-01':r==='month'?t.slice(0,7)+'-01':weekStart(t)}
+function creditedTo(r,pid){return r&&(pid==='any'?!personById(r.by):r.by===pid)}
+function openPersonView(pid,range){
+  range=range||'week';
+  var p=personById(pid)||{id:'any',name:pid==='any'?'Anyone / Unassigned':'?',color:ANY};
+  ui.modal={kind:'personview',pid:pid,range:range};
+  var t=today(), from=rangeStart(range);
+  var byId={}; tasks().forEach(function(k){byId[k.id]=k});
+  // history
+  var dates=Object.keys(days).filter(function(d){return d>=from&&d<=t}).sort().reverse();
+  var total=0,count=0,hist='';
+  dates.forEach(function(d){
+    var dd=days[d]; if(!dd||!dd.done) return;
+    var items=Object.keys(dd.done).filter(function(id){return creditedTo(dd.done[id],pid)}).map(function(id){return {id:id,r:dd.done[id],k:byId[id]}}).sort(function(a,b){return (b.r.at||0)-(a.r.at||0)});
+    if(!items.length) return;
+    var dayPts=0;
+    var rows=items.map(function(it){var pts=recPts(it.r,it.id);dayPts+=pts;total+=pts;count++;
+      var tm=it.r.at?new Date(it.r.at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';
+      return '<div class="hrow"><span class="ico">'+esc(it.k?it.k.icon:'\u2022')+'</span><span class="t"><b>'+esc(it.k?it.k.name:'(deleted chore)')+'</b><span>'+esc(tm)+'</span></span><span class="hp">+'+pts+'</span></div>'}).join('');
+    hist+='<div class="hday"><div class="hday-h"><b>'+(d===t?'Today':d===addDays(t,-1)?'Yesterday':esc(fmtLong(d)))+'</b><span>'+items.length+' done \u00B7 '+ptsLabel(dayPts)+'</span></div>'+rows+'</div>';
+  });
+  if(!hist) hist='<div class="empty">Nothing checked off '+(range==='week'?'this week':range==='month'?'this month':'this year')+' yet.</div>';
+  // assigned chores
+  var mine=tasks().filter(function(k){return pid==='any'?!personById(k.who):k.who===pid}).sort(byWhen);
+  var todayIds=tasksFor(t).map(function(k){return k.id});
+  function grp(title,list){ if(!list.length) return ''; return '<div class="sub">'+title+'</div>'+list.map(function(k){var due=todayIds.indexOf(k.id)>=0, dn=isDone(t,k.id);
+      return '<div class="hrow"><span class="ico">'+esc(k.icon||'')+'</span><span class="t"><b>'+esc(k.name)+'</b><span>'+esc(schedText(k))+' \u00B7 '+ptsLabel(ptsOf(k))+'</span></span>'+(due?'<span class="tag '+(dn?'ok':'')+'">'+(dn?'\u2713 done today':'due today')+'</span>':'')+'</div>'}).join(''); }
+  var daily=mine.filter(function(k){return k.type==='days'&&(k.days||[]).length===7}), weekly=mine.filter(function(k){return k.type==='days'&&(k.days||[]).length<7}), intv=mine.filter(function(k){return k.type==='interval'});
+  var assigned=mine.length?grp('Every day',daily)+grp('Weekly',weekly)+grp('Every few weeks / months',intv)
+    :'<div class="empty">No chores are assigned only to '+esc(p.name)+'. Chores set to \u201CAnyone\u201D still earn '+esc(p.name)+' points when checked off on a phone set to '+esc(p.name)+'.'+(canWrite()?' Assign chores in Setup.':'')+'</div>';
+  var label={week:'This week',month:'This month',year:'This year'}[range];
+  var h='<div class="scrim" data-action="scrim"><div class="sheet psheet"><div class="phead"><span class="pav" style="background:'+p.color+'">'+esc((p.name||'?').charAt(0).toUpperCase())+'</span><div><h2>'+esc(p.name)+'</h2><span class="muted">'+label+': <b>'+ptsLabel(total)+'</b> \u00B7 '+count+' chore'+(count===1?'':'s')+' done</span></div><button class="btn sm" data-action="close" style="margin-left:auto">Close</button></div>'+
+    '<div class="seg" style="margin:4px 0 14px">'+['week','month','year'].map(function(r){return '<button type="button" data-action="prange" data-r="'+r+'" class="'+(r===range?'on':'')+'">'+{week:'Week',month:'Month',year:'Year'}[r]+'</button>'}).join('')+'</div>'+
+    '<h3 class="ph">Completed</h3>'+hist+
+    (pid==='any'?'':'<h3 class="ph" style="margin-top:18px">Assigned chores'+(mine.length?' ('+mine.length+')':'')+'</h3>'+assigned)+
+    (pid==='any'?'<h3 class="ph" style="margin-top:18px">Chores for anyone ('+mine.length+')</h3>'+(mine.length?grp('Every day',daily)+grp('Weekly',weekly)+grp('Every few weeks / months',intv):'<div class="empty">None</div>'):'')+
+    '</div></div>';
+  modalEl.innerHTML=h;
+  var sh=modalEl.querySelector('.sheet'); if(sh) sh.scrollTop=0;
+}
 function openPerson(id){
   if(!canWrite()){toast('View only.');return}
   var p=personById(id), isNew=!p; p=p?clone(p):{name:'',color:PALETTE[people().length%PALETTE.length]};
@@ -491,6 +531,8 @@ document.addEventListener('click',function(e){
     case 'edit': openTask(el.dataset.id); break;
     case 'addperson': openPerson(null); break;
     case 'editperson': openPerson(el.dataset.id); break;
+    case 'person': openPersonView(el.dataset.pid,el.dataset.r); break;
+    case 'prange': if(ui.modal&&ui.modal.kind==='personview') openPersonView(ui.modal.pid,el.dataset.r); break;
     case 'close': closeModal(); break;
     case 'emoji': m.icon=el.dataset.e; el.parentNode.querySelectorAll('button').forEach(function(b){b.style.outline=''}); el.style.outline='3px solid var(--accent)'; break;
     case 'stype': m.type=el.dataset.v; el.parentNode.querySelectorAll('button').forEach(function(b){b.classList.toggle('on',b===el)}); modalEl.querySelector('[data-show="days"]').hidden=m.type!=='days'; modalEl.querySelector('[data-show="interval"]').hidden=m.type!=='interval'; break;
