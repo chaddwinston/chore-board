@@ -1,5 +1,5 @@
 // Offline app shell. Data sync is handled by Firestore's own offline cache.
-const CACHE = 'chores-20261109194223';
+const CACHE = 'chores-20261109203654';
 const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

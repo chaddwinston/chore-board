@@ -21,6 +21,7 @@ var ICONS={
   week:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M8 4v16M13 4v16M18 4v16"/></svg>',
   month:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="3"/><path d="M3 9h18M8 2v4M16 2v4M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01"/></svg>',
   upcoming:'<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><path d="M12 7v5l3 2"/></svg>',
+  points:'<svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3"/></svg>',
   setup:'<svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>',
   full:'<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>'
 };
@@ -47,7 +48,7 @@ var config=null, nextMap={}, days={};
 var exists={next:false,day:{}};
 var lastToday=today();
 var ui={tab:'today',date:today(),weekOf:today(),monthOf:today().slice(0,7),modal:null};
-try{var h=(location.hash||'').slice(1); if(['today','week','month','upcoming','setup'].indexOf(h)>=0) ui.tab=h;}catch(e){}
+try{var h=(location.hash||'').slice(1); if(['today','week','month','upcoming','points','setup'].indexOf(h)>=0) ui.tab=h;}catch(e){}
 
 function people(){return (config&&config.people)||[]}
 function tasks(){return (config&&config.tasks)||[]}
@@ -137,7 +138,7 @@ function startListening(){
   unsubs.push(onSnapshot(REF.next,opts,function(s){
     nextMap=s.exists()?Object.assign({},(s.data()||{}).next||{}):{}; ok(s); render();
   },bad));
-  var q=query(collection(fs,'households','home','days'),where('date','>=',addDays(today(),-120)));
+  var q=query(collection(fs,'households','home','days'),where('date','>=',(function(){var c=addDays(today(),-120),y=today().slice(0,4)+'-01-01';return y<c?y:c})()));
   unsubs.push(onSnapshot(q,opts,function(qs){
     qs.docChanges().forEach(function(ch){if(ch.type==='removed') delete days[ch.doc.id]});
     qs.docs.forEach(function(d){days[d.id]=d.data()});
@@ -213,7 +214,7 @@ function toggle(date,id,el){
     if(t.type==='interval'&&r.prev) setNext(id,r.prev);
   }else{
     if(!personById(t.who)&&people().length>1&&!personById(getMe())) toast('Tip: pick “This device is” at the top so you get credit.');
-    var v={at:Date.now(),by:personById(t.who)?t.who:(personById(getMe())?getMe():'any')};
+    var v={at:Date.now(),pts:ptsOf(t),by:personById(t.who)?t.who:(personById(getMe())?getMe():'any')};
     if(t.type==='interval'){v.prev=nextOf(t);setNext(id,addDays(date,t.every||7))}
     setDone(date,id,v);
     if(el) burst(el,colorOf(t.who));
@@ -233,7 +234,7 @@ function render(){
   if(['auth','verify','denied','unconfigured'].indexOf(mode)>=0){root.innerHTML=vAuth();return}
   var t=today();
   var h='<div class="shell"><nav class="rail"><div class="logo">✓</div>'+
-    navBtn('today','Today')+navBtn('week','Week')+navBtn('month','Month')+navBtn('upcoming','Upcoming')+navBtn('setup','Setup')+
+    navBtn('today','Today')+navBtn('week','Week')+navBtn('month','Month')+navBtn('upcoming','Upcoming')+navBtn('points','Points')+navBtn('setup','Setup')+
     '<div class="spacer"></div><button class="nav" data-action="full">'+ICONS.full+'Wall</button></nav><main class="main">';
   h+='<div class="top"><div><div class="clock" data-clock></div></div><div class="dateline">'+esc(fmtLong(t))+'<small>'+esc(subline())+'</small></div><div class="grow"></div>'+statusPill()+'</div>';
   if(mode==='offline') h+='<div class="banner">You’re offline. Check-offs are saved on this device and sync when you’re back online.</div>';
@@ -241,7 +242,7 @@ function render(){
   else if(!config&&configFromServer) h+='<div class="card"><h3>Your board is empty</h3><p>Load the starter schedule (43 chores for the house, pool, yard and dogs), then adjust it in Setup.</p><button class="btn primary" data-action="starter">Load starter schedule</button> <button class="btn" data-action="tab" data-tab="setup">Start from scratch</button></div>';
   else if(!config&&ui.tab!=='setup') h+='<div class="empty">Loading your board…</div>';
   else if(!tasks().length&&ui.tab!=='setup') h+='<div class="card"><h3>No chores yet</h3><p>Open Setup to add people and chores.</p><button class="btn primary" data-action="tab" data-tab="setup">Go to Setup</button></div>';
-  else h+=({today:vToday,week:vWeek,month:vMonth,upcoming:vUpcoming,setup:vSetup}[ui.tab]||vToday)();
+  else h+=({today:vToday,week:vWeek,month:vMonth,upcoming:vUpcoming,points:vPoints,setup:vSetup}[ui.tab]||vToday)();
   h+='</main></div>';
   var sy=window.scrollY, colsScroll=[];
   document.querySelectorAll('.cols').forEach(function(c){colsScroll.push(c.scrollLeft)});
@@ -266,16 +267,21 @@ function ring(pct,color,label){
   var c=2*Math.PI*23, off=c*(1-pct);
   return '<div class="ring"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="23" fill="none" stroke="var(--line)" stroke-width="5"/><circle cx="26" cy="26" r="23" fill="none" stroke="'+color+'" stroke-width="5" stroke-linecap="round" stroke-dasharray="'+c.toFixed(1)+'" stroke-dashoffset="'+off.toFixed(1)+'"/></svg><div class="av" style="background:'+color+'">'+esc(label)+'</div></div>';
 }
-function starsThisWeek(pid){
-  var s=weekStart(today()), n=0;
-  for(var d=s;d<=today();d=addDays(d,1)){var dd=days[d];if(!dd||!dd.done)continue;for(var k in dd.done){var r=dd.done[k];if(r&&(r.by===pid))n++}}
-  return n;
+function ptsOf(k){return (k&&k.points!=null&&k.points!=='')?Math.max(0,+k.points||0):Math.max(1,Math.round((+(k&&k.mins)||0)/5))}
+function recPts(r,id){ if(!r) return 0; if(r.pts!=null) return +r.pts||0; var t=null; tasks().forEach(function(k){if(k.id===id)t=k}); return t?ptsOf(t):0; }
+function pointsBetween(from,to){
+  var out={};
+  for(var d in days){ if(d<from||d>to) continue; var dd=days[d]; if(!dd||!dd.done) continue;
+    for(var id in dd.done){ var r=dd.done[id]; if(!r) continue; var who=personById(r.by)?r.by:'any'; out[who]=(out[who]||0)+recPts(r,id); } }
+  return out;
 }
+function starsThisWeek(pid){ return pointsBetween(weekStart(today()),today())[pid]||0; }
+function ptsLabel(n){return n+' pt'+(n===1?'':'s')}
 function choreCard(k,date,opts){
   var t=today(), done=isDone(date,k.id), preview=date>t, badge='';
   if(k.type==='interval'&&date===t&&!done){var n=diffDays(t,nextOf(k)); if(n>0) badge='<span class="badge over">'+n+' day'+(n>1?'s':'')+' late</span>'; else badge='<span class="badge due">due</span>';}
   var r0=rec(date,k.id), byP=r0&&people().length>1&&!personById(k.who)?personById(r0.by):null;
-  var meta=(byP?'<b style="color:'+byP.color+'">✓ '+esc(byP.name)+'</b> · ':'')+(opts&&opts.showWhen?WHEN_ICON[k.when]+' ':'')+(k.mins?k.mins+' min':'')+(k.type==='interval'?' · every '+k.every+' days':'')+badge;
+  var meta=(byP?'<b style="color:'+byP.color+'">✓ '+esc(byP.name)+'</b> · ':'')+(opts&&opts.showWhen?WHEN_ICON[k.when]+' ':'')+(k.mins?k.mins+' min · ':'')+'⭐ '+ptsLabel(done&&r0&&r0.pts!=null?+r0.pts:ptsOf(k))+(k.type==='interval'?' · every '+k.every+' days':'')+badge;
   return '<button class="chore'+(done?' done':'')+(preview?' preview':'')+'" style="--c:'+colorOf(k.who)+'" data-action="toggle" data-id="'+esc(k.id)+'" data-date="'+date+'">'+
     '<span class="ico">'+esc(k.icon||'✔️')+'</span><span class="body"><span class="name">'+esc(k.name)+'</span><span class="meta">'+meta+'</span>'+(k.notes?'<span class="note">'+esc(k.notes)+'</span>':'')+'</span><span class="check">'+CHECK+'</span></button>';
 }
@@ -290,7 +296,7 @@ function vToday(){
   groups.forEach(function(g){
     var d=g.items.filter(function(k){return isDone(date,k.id)}).length, n=g.items.length;
     var did=g.p.id==='any'?0:list.filter(function(k){var r=rec(date,k.id);return r&&r.by===g.p.id}).length;
-    var txt=g.p.id==='any'?d+' of '+n+' done':(n?d+' of '+n+' assigned · ':'')+did+' done '+(date===t?'today':'this day')+' · ⭐ '+starsThisWeek(g.p.id)+' this week';
+    var txt=g.p.id==='any'?d+' of '+n+' done':(n?d+' of '+n+' assigned · ':'')+did+' done '+(date===t?'today':'this day')+' · ⭐ '+starsThisWeek(g.p.id)+' pts this week';
     var pct=g.p.id==='any'||n?(n?d/n:0):(list.length?did/list.length:0);
     h+='<div class="who">'+ring(pct,g.p.color,(g.p.name||'?').charAt(0).toUpperCase())+'<div><b>'+esc(g.p.name)+'</b><span>'+txt+'</span></div></div>';
   });
@@ -361,6 +367,34 @@ function vUpcoming(){
   });
   return h+'</div>';
 }
+function vPoints(){
+  var t=today(), ppl=people();
+  function rowsFor(tot){var r=ppl.map(function(x){return {n:x.name,c:x.color,v:tot[x.id]||0}}); if(tot.any) r.push({n:'Unassigned',c:ANY,v:tot.any}); return r}
+  var periods=[['This week',weekStart(t)],['This month',t.slice(0,7)+'-01'],['This year',t.slice(0,4)+'-01-01']];
+  var h='<div class="ptsgrid">';
+  periods.forEach(function(pd){
+    var rows=rowsFor(pointsBetween(pd[1],t)), mx=Math.max.apply(null,rows.map(function(r){return r.v}).concat([1]));
+    var top=Math.max.apply(null,rows.filter(function(r){return r.n!=='Unassigned'}).map(function(r){return r.v}).concat([0]));
+    var leaders=rows.filter(function(r){return r.n!=='Unassigned'&&r.v===top&&top>0});
+    h+='<div class="card"><h3>'+pd[0]+'</h3>'+rows.map(function(r){return '<div class="pt-row"><span class="pt-name"><i style="background:'+r.c+'"></i>'+esc(r.n)+(leaders.length===1&&leaders[0]===r?' 👑':'')+'</span><span class="pt-bar"><i style="width:'+Math.round(r.v/mx*100)+'%;background:'+r.c+'"></i></span><b>'+r.v+'</b></div>'}).join('')+'</div>';
+  });
+  h+='</div>';
+  function chart(title,buckets){
+    var all=buckets.map(function(b){return rowsFor(pointsBetween(b.from,b.to))});
+    var mx=1; all.forEach(function(rs){rs.forEach(function(r){if(r.v>mx)mx=r.v})});
+    var c='<div class="card"><h3>'+title+'</h3><div class="hist">';
+    buckets.forEach(function(b,i){c+='<div class="hcol"><div class="hbars">'+all[i].map(function(r){return '<i title="'+esc(r.n)+': '+r.v+'" style="height:'+Math.max(r.v?3:0,Math.round(r.v/mx*120))+'px;background:'+r.c+'"></i>'}).join('')+'</div><span>'+esc(b.label)+'</span></div>'});
+    c+='</div><div class="legend">'+rowsFor({}).concat(all.some(function(rs){return rs.some(function(r){return r.n==='Unassigned'})})?[{n:'Unassigned',c:ANY}]:[]).map(function(r){return '<span><i style="background:'+r.c+'"></i>'+esc(r.n)+'</span>'}).join('')+'</div></div>';
+    return c;
+  }
+  var weeks=[], ws=weekStart(t);
+  for(var i=11;i>=0;i--){var f=addDays(ws,-7*i); weeks.push({from:f,to:addDays(f,6),label:(parse(f).getMonth()+1)+'/'+parse(f).getDate()})}
+  var months=[], y=t.slice(0,4);
+  for(var m=1;m<=+t.slice(5,7);m++){var mm=y+'-'+pad(m); months.push({from:mm+'-01',to:mm+'-31',label:parse(mm+'-01').toLocaleDateString(undefined,{month:'short'})})}
+  h+=chart('Last 12 weeks',weeks)+chart(y+' by month',months);
+  h+='<div class="card"><h3>How points work</h3><p class="muted" style="margin:0;line-height:1.5">Each chore is worth the points set on it (it starts at 1 point per 5 minutes). Points go to whoever checks the chore off: the assigned person, or for \u201CAnyone\u201D chores, the person picked under \u201CThis device is\u201D on that phone. Change a chore\u2019s points in Setup. Past check-offs keep the points they earned. Weeks run Monday to Sunday.</p></div>';
+  return h;
+}
 function schedText(k){
   if(k.type==='interval') return 'Every '+k.every+' days · next '+fmtShort(nextOf(k));
   var d=k.days||[]; if(d.length===7) return 'Every day · '+WHEN[k.when];
@@ -371,7 +405,7 @@ function vSetup(){
   var daily=all.filter(function(k){return k.type==='days'&&(k.days||[]).length===7});
   var weekly=all.filter(function(k){return k.type==='days'&&(k.days||[]).length<7}).sort(function(a,b){var fa=((a.days[0]+6)%7),fb=((b.days[0]+6)%7);return fa-fb||byWhen(a,b)});
   var intv=all.filter(function(k){return k.type==='interval'}).sort(function(a,b){return a.every-b.every});
-  function rows(list){return list.map(function(k){var p=personById(k.who);return '<button class="row" data-action="edit" data-id="'+esc(k.id)+'"><span class="ico">'+esc(k.icon||'')+'</span><span class="w" style="background:'+colorOf(k.who)+'"></span><span class="t"><b>'+esc(k.name)+'</b><span>'+esc(schedText(k))+' · '+(k.mins||0)+' min · '+esc(p?p.name:'Anyone')+'</span></span></button>'}).join('')||'<div class="empty">None</div>'}
+  function rows(list){return list.map(function(k){var p=personById(k.who);return '<button class="row" data-action="edit" data-id="'+esc(k.id)+'"><span class="ico">'+esc(k.icon||'')+'</span><span class="w" style="background:'+colorOf(k.who)+'"></span><span class="t"><b>'+esc(k.name)+'</b><span>'+esc(schedText(k))+' · '+(k.mins||0)+' min · ⭐ '+ptsLabel(ptsOf(k))+' · '+esc(p?p.name:'Anyone')+'</span></span></button>'}).join('')||'<div class="empty">None</div>'}
   var ro=!canWrite();
   var h='<div class="grid2"><div>';
   h+='<div class="card"><div class="h2"><h3>People</h3>'+(ro?'':'<button class="btn sm primary" data-action="addperson">+ Person</button>')+'</div>';
@@ -400,6 +434,7 @@ function openTask(id){
   '<div class="fr"><div class="f"><label>Who</label><select name="who">'+ppl.map(function(p){return '<option value="'+esc(p.id)+'"'+(k.who===p.id?' selected':'')+'>'+esc(p.name)+'</option>'}).join('')+'<option value="any"'+(!personById(k.who)?' selected':'')+'>Anyone</option></select></div>'+
   '<div class="f"><label>Time of day</label><select name="when">'+['am','any','pm'].map(function(w){return '<option value="'+w+'"'+(k.when===w?' selected':'')+'>'+WHEN[w]+'</option>'}).join('')+'</select></div>'+
   '<div class="f"><label>Minutes</label><input name="mins" type="number" min="0" max="600" value="'+(+k.mins||0)+'"></div></div>'+
+  '<div class="f"><label>Points</label><input name="points" type="number" min="0" max="999" inputmode="numeric" data-auto="'+(k.points==null?'1':'0')+'" value="'+ptsOf(k)+'"><small class="hint">Starts at 1 point per 5 minutes. Set it higher for chores nobody wants.</small></div>'+
   '<div class="f"><label>Repeats</label><div class="seg" data-seg="type"><button type="button" data-action="stype" data-v="days" class="'+(k.type==='days'?'on':'')+'">On set days</button><button type="button" data-action="stype" data-v="interval" class="'+(k.type==='interval'?'on':'')+'">Every N days</button></div></div>'+
   '<div data-show="days" '+(k.type==='days'?'':'hidden')+'><div class="f"><label>Days</label><div class="seg">'+[1,2,3,4,5,6,0].map(function(d){return '<button type="button" data-action="dchip" data-d="'+d+'" class="'+((k.days||[]).indexOf(d)>=0?'on':'')+'">'+DOW[d]+'</button>'}).join('')+'<button type="button" data-action="dall">Every day</button></div></div></div>'+
   '<div data-show="interval" '+(k.type==='interval'?'':'hidden')+'><div class="fr" style="grid-template-columns:1fr 1fr"><div class="f"><label>Every (days)</label><input name="every" type="number" min="1" max="730" value="'+(+k.every||30)+'"></div><div class="f"><label>Next due</label><input name="next" type="date" value="'+(isNew?today():nextOf(k))+'"></div></div></div>'+
@@ -421,7 +456,7 @@ function saveTaskForm(form){
   ensureConfig();
   var k=m.id?config.tasks.filter(function(x){return x.id===m.id})[0]:null;
   if(!k){k={id:uid('t'),order:config.tasks.length?Math.max.apply(null,config.tasks.map(function(x){return x.order||0}))+1:0};config.tasks.push(k)}
-  k.name=name;k.icon=m.icon||'✨';k.who=f.who.value;k.when=f.when.value;k.mins=Math.max(0,parseInt(f.mins.value,10)||0);k.notes=f.notes.value.trim();k.type=m.type;
+  k.name=name;k.icon=m.icon||'✨';k.who=f.who.value;k.when=f.when.value;k.mins=Math.max(0,parseInt(f.mins.value,10)||0);var pv=parseInt(f.points.value,10);if(isNaN(pv))delete k.points;else k.points=Math.max(0,Math.min(999,pv));k.notes=f.notes.value.trim();k.type=m.type;
   if(m.type==='days'){k.days=m.days.slice().sort();delete k.every}
   else{k.every=Math.max(1,parseInt(f.every.value,10)||30);delete k.days}
   saveConfig();
@@ -480,6 +515,12 @@ document.addEventListener('click',function(e){
 document.addEventListener('submit',function(e){
   e.preventDefault();
   var f=e.target; if(f.dataset.form==='auth') doAuth(f); else if(f.dataset.form==='task') saveTaskForm(f); else if(f.dataset.form==='person') savePersonForm(f);
+});
+document.addEventListener('input',function(e){
+  var el=e.target; if(!el||!el.form||el.form.dataset.form!=='task') return;
+  var pts=el.form.elements.points; if(!pts) return;
+  if(el.name==='points'){pts.dataset.auto='0';return}
+  if(el.name==='mins'&&pts.dataset.auto==='1'){pts.value=Math.max(1,Math.round((parseInt(el.value,10)||0)/5))}
 });
 document.addEventListener('change',function(e){
   var el=e.target; if(el.dataset&&el.dataset.change==='me'){setMe(el.value);toast('Chores marked \u201CAnyone\u201D will be credited to '+((personById(el.value)||{}).name||'nobody')+' on this device');render();return}
