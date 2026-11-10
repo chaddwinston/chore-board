@@ -242,6 +242,35 @@ body{padding-top:env(safe-area-inset-top)}
 .tag{font-size:12px;font-weight:900;padding:3px 9px;border-radius:999px;background:#FFF3BF;color:#8F5B00;white-space:nowrap}
 .tag.ok{background:#D3F9D8;color:#2B8A3E}
 @media (prefers-color-scheme:dark){.tag{background:#4A3B10;color:#FFE066}.tag.ok{background:#173D22;color:#8CE99A}}
+
+/* steps */
+.sbar{display:block;height:5px;border-radius:5px;background:var(--line);overflow:hidden;margin-top:6px;max-width:220px}
+.sbar i{display:block;height:100%;background:var(--c)}
+.ssheet{width:min(560px,100%)}
+.sico{font-size:30px;width:46px;height:46px;display:grid;place-items:center;border-radius:14px;background:color-mix(in srgb,var(--c) 14%,transparent);flex:none}
+.prog.big{height:10px;margin:2px 0 12px}
+.small{font-size:13.5px;margin:6px 0}
+.steps{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.step{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:13px 12px;border-radius:14px;background:var(--panel2);border:1px solid var(--line)}
+.step .num{width:26px;height:26px;border-radius:50%;background:var(--line);display:grid;place-items:center;font-size:13px;font-weight:900;flex:none}
+.step .sname{flex:1;font-weight:800;font-size:16px}
+.step .sname small{display:block;font-size:12px;font-weight:800;margin-top:2px}
+.step .check{width:34px;height:34px;border-radius:50%;border:3px solid color-mix(in srgb,var(--c) 55%,var(--line));display:grid;place-items:center;flex:none}
+.step .check svg{width:20px;height:20px;stroke:#fff;stroke-width:3.4;fill:none;stroke-linecap:round;stroke-linejoin:round;opacity:0}
+.step.done{background:color-mix(in srgb,var(--c) 9%,var(--panel))}
+.step.done .sname{text-decoration:line-through;color:var(--muted)}
+.step.done .check{background:var(--c);border-color:var(--c);animation:pop .3s ease}
+.step.done .check svg{opacity:1}
+.step.locked{opacity:.5}
+.donebar{background:color-mix(in srgb,var(--ok) 14%,var(--panel));color:var(--ok);font-weight:900;padding:10px 12px;border-radius:12px;text-align:center}
+.steprow{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.steprow .num{width:22px;text-align:center;font-weight:900;color:var(--muted);font-size:13px}
+.steprow input{flex:1;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);font-weight:700}
+.ib{width:36px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-weight:900;font-size:16px}
+.ib:disabled{opacity:.35}
+.stepctl{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:4px}
+.chk{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:800;color:var(--ink)}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
 </style>
 </head>
 <body>

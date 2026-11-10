@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, reload } from 'firebase/auth';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, query, where, onSnapshot, setDoc } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, query, where, onSnapshot, setDoc, deleteField } from 'firebase/firestore';
 import FIREBASE_CONFIG from './firebase-config.js';
 import STARTER from './starter.js';
 (function(){
@@ -44,7 +44,7 @@ function uid(p){return p+Date.now().toString(36)+Math.random().toString(36).slic
 
 /* ---------- state ---------- */
 var db=null, mode='connecting';
-var config=null, nextMap={}, days={};
+var config=null, nextMap={}, days={}, progress={};
 var exists={next:false,day:{}};
 var lastToday=today();
 var ui={tab:'today',date:today(),weekOf:today(),monthOf:today().slice(0,7),modal:null};
@@ -113,6 +113,7 @@ function boot(){
   catch(e){ fs=initializeFirestore(fb,{}); }
   REF.config=doc(fs,'households','home');
   REF.next=doc(fs,'households','home','meta','next');
+  REF.progress=doc(fs,'households','home','meta','progress');
   onAuthStateChanged(auth,function(u){
     user=u; stopListening();
     if(!u){mode='auth';render();return}
@@ -121,7 +122,7 @@ function boot(){
   });
   addEventListener('offline',function(){if(mode==='live'){mode='offline';render()}});
 }
-function stopListening(){unsubs.forEach(function(f){try{f()}catch(e){}});unsubs=[];config=null;nextMap={};days={};configFromServer=false}
+function stopListening(){unsubs.forEach(function(f){try{f()}catch(e){}});unsubs=[];config=null;nextMap={};days={};progress={};configFromServer=false}
 function startListening(){
   mode='connecting';render();
   var timer=setTimeout(function(){if(mode==='connecting'){mode='offline';render()}},10000);
@@ -134,6 +135,9 @@ function startListening(){
   unsubs.push(onSnapshot(REF.config,opts,function(s){
     if(!s.metadata.fromCache) configFromServer=true;
     config=s.exists()?clone(s.data()):null; ok(s); render();
+  },bad));
+  unsubs.push(onSnapshot(REF.progress,opts,function(s){
+    progress=s.exists()?clone((s.data()||{}).p||{}):{}; ok(s); render();
   },bad));
   unsubs.push(onSnapshot(REF.next,opts,function(s){
     nextMap=s.exists()?Object.assign({},(s.data()||{}).next||{}):{}; ok(s); render();
@@ -203,11 +207,12 @@ function vAuth(){
 }
 
 /* ---------- actions ---------- */
-function toggle(date,id,el){
+function toggle(date,id,el,force){
   if(!canWrite()){toast(mode==='readonly'?'View only.':'Still connecting…');return}
-  if(date>today()) return;
   var t=null;tasks().forEach(function(k){if(k.id===id)t=k});
   if(!t) return;
+  if(!force&&hasSteps(t)){openSteps(date,id);return}
+  if(date>today()) return;
   var r=rec(date,id);
   if(r){
     setDone(date,id,null);
@@ -226,6 +231,63 @@ function toggle(date,id,el){
     }
   }
   render();
+}
+
+/* ---------- steps (mini tasks) ---------- */
+function taskById(id){var t=null;tasks().forEach(function(k){if(k.id===id)t=k});return t}
+function hasSteps(k){return !!(k&&k.steps&&k.steps.length)}
+function stepKey(k,date){return k.type==='interval'?'due'+nextOf(k):'d'+date}
+function stepRec(k,date,sid){ if(isDone(date,k.id)) return rec(date,k.id); var e=(progress[k.id]||{})[stepKey(k,date)]; return e?e[sid]:null }
+function stepsDoneCount(k,date){ if(isDone(date,k.id)) return k.steps.length; return k.steps.filter(function(st){return !!stepRec(k,date,st.id)}).length }
+function setStep(k,date,sid,val){
+  var key=stepKey(k,date), cur=progress[k.id]||{}, upd={}, entry={};
+  entry[sid]=val; upd[key]=entry;
+  Object.keys(cur).forEach(function(kk){ if(kk!==key) upd[kk]=deleteField(); });
+  var np=Object.assign({},progress), nt={}; nt[key]=Object.assign({},cur[key]||{}); nt[key][sid]=val; np[k.id]=nt; progress=np;
+  if(canWrite()){var body={p:{}};body.p[k.id]=upd;setDoc(REF.progress,body,{merge:true}).catch(writeErr)}
+}
+function stepToggle(sid){
+  var m=ui.modal; if(!m||m.kind!=='steps') return;
+  var k=taskById(m.id); if(!k) return;
+  if(!canWrite()){toast('View only.');return}
+  if(m.date>today()){toast('You can check steps off on the day.');return}
+  var idx=-1; k.steps.forEach(function(st,i){if(st.id===sid)idx=i});
+  var wasDone=isDone(m.date,k.id), cur=stepRec(k,m.date,sid);
+  if(cur){
+    if(wasDone){ // reopen: keep the other steps checked, uncheck this one
+      var r=rec(m.date,k.id), by=(r&&r.by)||'any', at=(r&&r.at)||Date.now();
+      toggle(m.date,k.id,null,true);
+      k.steps.forEach(function(st){ if(st.id!==sid) setStep(k,m.date,st.id,{at:at,by:by}); });
+      setStep(k,m.date,sid,null);
+    } else setStep(k,m.date,sid,null);
+  }else{
+    if(k.stepsInOrder){ for(var i=0;i<idx;i++){ if(!stepRec(k,m.date,k.steps[i].id)){ toast('Do the steps in order. Next up: \u201C'+k.steps[i].name+'\u201D'); return; } } }
+    var me=personById(k.who)?k.who:(personById(getMe())?getMe():'any');
+    setStep(k,m.date,sid,{at:Date.now(),by:me});
+    var row=modalEl.querySelector('[data-sid="'+sid+'"] .check'); if(row) burst(row,colorOf(k.who));
+    if(stepsDoneCount(k,m.date)===k.steps.length&&!isDone(m.date,k.id)){
+      toggle(m.date,k.id,null,true);
+      toast(k.name+': done! +'+ptsLabel(ptsOf(k)));
+      setTimeout(function(){ if(ui.modal&&ui.modal.kind==='steps'&&ui.modal.id===k.id) closeModal(); },900);
+    }
+  }
+  renderSteps(); render();
+}
+function openSteps(date,id){ ui.modal={kind:'steps',date:date,id:id}; renderSteps(); }
+function renderSteps(){
+  var m=ui.modal; if(!m||m.kind!=='steps') return;
+  var k=taskById(m.id); if(!k||!hasSteps(k)){closeModal();return}
+  var done=isDone(m.date,k.id), n=stepsDoneCount(k,m.date), N=k.steps.length, future=m.date>today(), c=colorOf(k.who);
+  var nextIdx=-1; if(k.stepsInOrder&&!done){ for(var i=0;i<N;i++){ if(!stepRec(k,m.date,k.steps[i].id)){nextIdx=i;break} } }
+  var h='<div class="scrim" data-action="scrim"><div class="sheet ssheet" style="--c:'+c+'"><div class="phead"><span class="sico">'+esc(k.icon||'')+'</span><div><h2>'+esc(k.name)+'</h2><span class="muted">'+(m.date===today()?'Today':esc(fmtLong(m.date)))+' \u00B7 '+n+' of '+N+' steps \u00B7 \u2B50 '+ptsLabel(ptsOf(k))+'</span></div><button class="btn sm" data-action="close" style="margin-left:auto">Close</button></div>'+
+    '<div class="prog big"><i style="width:'+Math.round(n/N*100)+'%;background:'+c+'"></i></div>'+
+    (k.stepsInOrder?'<p class="muted small">Do these in order.</p>':'')+(future?'<p class="muted small">Preview: you can check steps off on the day.</p>':'')+'<div class="steps">';
+  k.steps.forEach(function(st,i){
+    var r=stepRec(k,m.date,st.id), who=r&&people().length>1?personById(r.by):null, locked=k.stepsInOrder&&!r&&nextIdx>=0&&i>nextIdx;
+    h+='<button class="step'+(r?' done':'')+(locked||future?' locked':'')+'" data-action="step" data-sid="'+esc(st.id)+'"><span class="num">'+(i+1)+'</span><span class="sname">'+esc(st.name)+(who?'<small style="color:'+who.color+'">\u2713 '+esc(who.name)+'</small>':'')+'</span><span class="check">'+CHECK+'</span></button>';
+  });
+  h+='</div>'+(done?'<p class="donebar">\u2713 Chore complete</p>':'<p class="muted small">The chore checks itself off when the last step is done.</p>')+(k.notes?'<p class="muted small">'+esc(k.notes)+'</p>':'')+'</div></div>';
+  modalEl.innerHTML=h;
 }
 
 /* ---------- render ---------- */
@@ -250,6 +312,7 @@ function render(){
   document.querySelectorAll('.cols').forEach(function(c,i){if(colsScroll[i])c.scrollLeft=colsScroll[i]});
   window.scrollTo(0,sy);
   tickClock();
+  if(ui.modal&&ui.modal.kind==='steps') renderSteps();
 }
 function navBtn(k,label){return '<button class="nav'+(ui.tab===k?' on':'')+'" data-action="tab" data-tab="'+k+'">'+ICONS[k]+label+'</button>'}
 function subline(){
@@ -282,8 +345,9 @@ function choreCard(k,date,opts){
   if(k.type==='interval'&&date===t&&!done){var n=diffDays(t,nextOf(k)); if(n>0) badge='<span class="badge over">'+n+' day'+(n>1?'s':'')+' late</span>'; else badge='<span class="badge due">due</span>';}
   var r0=rec(date,k.id), byP=r0&&people().length>1&&!personById(k.who)?personById(r0.by):null;
   var meta=(byP?'<b style="color:'+byP.color+'">✓ '+esc(byP.name)+'</b> · ':'')+(opts&&opts.showWhen?WHEN_ICON[k.when]+' ':'')+(k.mins?k.mins+' min · ':'')+'⭐ '+ptsLabel(done&&r0&&r0.pts!=null?+r0.pts:ptsOf(k))+(k.type==='interval'?' · every '+k.every+' days':'')+badge;
+  var stepBar=''; if(hasSteps(k)){var sn=stepsDoneCount(k,date), sN=k.steps.length; meta+=' · \u2611 '+sn+'/'+sN+' steps'; stepBar='<span class="sbar"><i style="width:'+Math.round(sn/sN*100)+'%"></i></span>';}
   return '<button class="chore'+(done?' done':'')+(preview?' preview':'')+'" style="--c:'+colorOf(k.who)+'" data-action="toggle" data-id="'+esc(k.id)+'" data-date="'+date+'">'+
-    '<span class="ico">'+esc(k.icon||'✔️')+'</span><span class="body"><span class="name">'+esc(k.name)+'</span><span class="meta">'+meta+'</span>'+(k.notes?'<span class="note">'+esc(k.notes)+'</span>':'')+'</span><span class="check">'+CHECK+'</span></button>';
+    '<span class="ico">'+esc(k.icon||'✔️')+'</span><span class="body"><span class="name">'+esc(k.name)+'</span><span class="meta">'+meta+'</span>'+stepBar+(k.notes?'<span class="note">'+esc(k.notes)+'</span>':'')+'</span><span class="check">'+CHECK+'</span></button>';
 }
 function vToday(){
   var date=ui.date, t=today(), list=tasksFor(date), ppl=people();
@@ -405,7 +469,7 @@ function vSetup(){
   var daily=all.filter(function(k){return k.type==='days'&&(k.days||[]).length===7});
   var weekly=all.filter(function(k){return k.type==='days'&&(k.days||[]).length<7}).sort(function(a,b){var fa=((a.days[0]+6)%7),fb=((b.days[0]+6)%7);return fa-fb||byWhen(a,b)});
   var intv=all.filter(function(k){return k.type==='interval'}).sort(function(a,b){return a.every-b.every});
-  function rows(list){return list.map(function(k){var p=personById(k.who);return '<button class="row" data-action="edit" data-id="'+esc(k.id)+'"><span class="ico">'+esc(k.icon||'')+'</span><span class="w" style="background:'+colorOf(k.who)+'"></span><span class="t"><b>'+esc(k.name)+'</b><span>'+esc(schedText(k))+' · '+(k.mins||0)+' min · ⭐ '+ptsLabel(ptsOf(k))+' · '+esc(p?p.name:'Anyone')+'</span></span></button>'}).join('')||'<div class="empty">None</div>'}
+  function rows(list){return list.map(function(k){var p=personById(k.who);return '<button class="row" data-action="edit" data-id="'+esc(k.id)+'"><span class="ico">'+esc(k.icon||'')+'</span><span class="w" style="background:'+colorOf(k.who)+'"></span><span class="t"><b>'+esc(k.name)+'</b><span>'+esc(schedText(k))+' · '+(k.mins||0)+' min · ⭐ '+ptsLabel(ptsOf(k))+(hasSteps(k)?' · \u2611 '+k.steps.length+' steps':'')+' · '+esc(p?p.name:'Anyone')+'</span></span></button>'}).join('')||'<div class="empty">None</div>'}
   var ro=!canWrite();
   var h='<div class="grid2"><div>';
   h+='<div class="card"><div class="h2"><h3>People</h3>'+(ro?'':'<button class="btn sm primary" data-action="addperson">+ Person</button>')+'</div>';
@@ -426,7 +490,7 @@ function openTask(id){
   if(!canWrite()){toast('View only.');return}
   var k=null;tasks().forEach(function(x){if(x.id===id)k=x});
   var isNew=!k; k=k?clone(k):{icon:'✨',name:'',who:(people()[0]||{}).id||'any',when:'any',mins:10,type:'days',days:[ (parse(ui.date).getDay()) ],every:30,notes:''};
-  ui.modal={kind:'task',id:isNew?null:k.id,type:k.type,days:(k.days||[]).slice(),icon:k.icon};
+  ui.modal={kind:'task',id:isNew?null:k.id,type:k.type,days:(k.days||[]).slice(),icon:k.icon,steps:clone(k.steps||[])};
   var ppl=people();
   var h='<div class="scrim" data-action="scrim"><form class="sheet" data-form="task"><h2>'+(isNew?'New chore':'Edit chore')+'</h2>'+
   '<div class="f"><label>Name</label><input name="name" required maxlength="80" value="'+esc(k.name)+'" placeholder="e.g. Water the plants"></div>'+
@@ -438,6 +502,7 @@ function openTask(id){
   '<div class="f"><label>Repeats</label><div class="seg" data-seg="type"><button type="button" data-action="stype" data-v="days" class="'+(k.type==='days'?'on':'')+'">On set days</button><button type="button" data-action="stype" data-v="interval" class="'+(k.type==='interval'?'on':'')+'">Every N days</button></div></div>'+
   '<div data-show="days" '+(k.type==='days'?'':'hidden')+'><div class="f"><label>Days</label><div class="seg">'+[1,2,3,4,5,6,0].map(function(d){return '<button type="button" data-action="dchip" data-d="'+d+'" class="'+((k.days||[]).indexOf(d)>=0?'on':'')+'">'+DOW[d]+'</button>'}).join('')+'<button type="button" data-action="dall">Every day</button></div></div></div>'+
   '<div data-show="interval" '+(k.type==='interval'?'':'hidden')+'><div class="fr" style="grid-template-columns:1fr 1fr"><div class="f"><label>Every (days)</label><input name="every" type="number" min="1" max="730" value="'+(+k.every||30)+'"></div><div class="f"><label>Next due</label><input name="next" type="date" value="'+(isNew?today():nextOf(k))+'"></div></div></div>'+
+  '<div class="f"><label>Steps (optional)</label><div data-steps>'+stepsEditor()+'</div><div class="stepctl"><button type="button" class="btn sm" data-action="addstep">+ Add step</button><label class="chk"><input type="checkbox" name="inorder"'+(k.stepsInOrder?' checked':'')+'> Must be done in order</label></div><small class="hint">With steps, tapping the chore opens its checklist, and the chore checks itself off when the last step is done.</small></div>'+
   '<div class="f"><label>Notes (optional)</label><textarea name="notes" maxlength="300">'+esc(k.notes||'')+'</textarea></div>'+
   '<div class="actions">'+(isNew?'':'<button type="button" class="btn danger" data-action="del">Delete</button>')+'<div class="grow"></div><button type="button" class="btn" data-action="close">Cancel</button><button type="submit" class="btn primary">Save</button></div></form></div>';
   modalEl.innerHTML=h;
@@ -482,6 +547,11 @@ function openPersonView(pid,range){
   modalEl.innerHTML=h;
   var sh=modalEl.querySelector('.sheet'); if(sh) sh.scrollTop=0;
 }
+function stepsEditor(){
+  var st=(ui.modal&&ui.modal.steps)||[];
+  return st.map(function(x,i){return '<div class="steprow"><span class="num">'+(i+1)+'</span><input data-sidx="'+i+'" value="'+esc(x.name)+'" placeholder="Step '+(i+1)+'" maxlength="80" enterkeyhint="next"><button type="button" class="ib" data-action="stepup" data-i="'+i+'" title="Move up"'+(i?'':' disabled')+'>\u2191</button><button type="button" class="ib" data-action="steprm" data-i="'+i+'" title="Remove">\u00D7</button></div>'}).join('');
+}
+function refreshStepsEditor(focusIdx){var box=modalEl.querySelector('[data-steps]'); if(!box) return; box.innerHTML=stepsEditor(); if(focusIdx!=null){var inp=box.querySelector('[data-sidx="'+focusIdx+'"]'); if(inp) inp.focus();}}
 function openPerson(id){
   if(!canWrite()){toast('View only.');return}
   var p=personById(id), isNew=!p; p=p?clone(p):{name:'',color:PALETTE[people().length%PALETTE.length]};
@@ -496,7 +566,7 @@ function saveTaskForm(form){
   ensureConfig();
   var k=m.id?config.tasks.filter(function(x){return x.id===m.id})[0]:null;
   if(!k){k={id:uid('t'),order:config.tasks.length?Math.max.apply(null,config.tasks.map(function(x){return x.order||0}))+1:0};config.tasks.push(k)}
-  k.name=name;k.icon=m.icon||'✨';k.who=f.who.value;k.when=f.when.value;k.mins=Math.max(0,parseInt(f.mins.value,10)||0);var pv=parseInt(f.points.value,10);if(isNaN(pv))delete k.points;else k.points=Math.max(0,Math.min(999,pv));k.notes=f.notes.value.trim();k.type=m.type;
+  k.name=name;k.icon=m.icon||'✨';k.who=f.who.value;k.when=f.when.value;k.mins=Math.max(0,parseInt(f.mins.value,10)||0);var pv=parseInt(f.points.value,10);if(isNaN(pv))delete k.points;else k.points=Math.max(0,Math.min(999,pv));k.notes=f.notes.value.trim();var stl=(m.steps||[]).map(function(x){return {id:x.id||uid('s'),name:String(x.name||'').trim()}}).filter(function(x){return x.name});if(stl.length){k.steps=stl;k.stepsInOrder=!!f.inorder.checked}else{delete k.steps;delete k.stepsInOrder}k.type=m.type;
   if(m.type==='days'){k.days=m.days.slice().sort();delete k.every}
   else{k.every=Math.max(1,parseInt(f.every.value,10)||30);delete k.days}
   saveConfig();
@@ -532,6 +602,10 @@ document.addEventListener('click',function(e){
     case 'addperson': openPerson(null); break;
     case 'editperson': openPerson(el.dataset.id); break;
     case 'person': openPersonView(el.dataset.pid,el.dataset.r); break;
+    case 'step': stepToggle(el.dataset.sid); break;
+    case 'addstep': m.steps.push({id:uid('s'),name:''}); refreshStepsEditor(m.steps.length-1); break;
+    case 'steprm': m.steps.splice(+el.dataset.i,1); refreshStepsEditor(); break;
+    case 'stepup': var si=+el.dataset.i; if(si>0){var tmp=m.steps[si-1];m.steps[si-1]=m.steps[si];m.steps[si]=tmp;} refreshStepsEditor(si-1); break;
     case 'prange': if(ui.modal&&ui.modal.kind==='personview') openPersonView(ui.modal.pid,el.dataset.r); break;
     case 'close': closeModal(); break;
     case 'emoji': m.icon=el.dataset.e; el.parentNode.querySelectorAll('button').forEach(function(b){b.style.outline=''}); el.style.outline='3px solid var(--accent)'; break;
@@ -561,6 +635,7 @@ document.addEventListener('submit',function(e){
 document.addEventListener('input',function(e){
   var el=e.target; if(!el||!el.form||el.form.dataset.form!=='task') return;
   var pts=el.form.elements.points; if(!pts) return;
+  if(el.dataset&&el.dataset.sidx!=null){if(ui.modal&&ui.modal.steps&&ui.modal.steps[+el.dataset.sidx]) ui.modal.steps[+el.dataset.sidx].name=el.value;return}
   if(el.name==='points'){pts.dataset.auto='0';return}
   if(el.name==='mins'&&pts.dataset.auto==='1'){pts.value=Math.max(1,Math.round((parseInt(el.value,10)||0)/5))}
 });
@@ -568,7 +643,10 @@ document.addEventListener('change',function(e){
   var el=e.target; if(el.dataset&&el.dataset.change==='me'){setMe(el.value);toast('Chores marked \u201CAnyone\u201D will be credited to '+((personById(el.value)||{}).name||'nobody')+' on this device');render();return}
   if(el.dataset&&el.dataset.change==='saver'){ensureConfig();config.settings.screensaverMin=+el.value;saveConfig();toast(+el.value?'Screensaver after '+el.value+' min':'Screensaver off')}
 });
-document.addEventListener('keydown',function(e){if(e.key==='Escape'&&ui.modal)closeModal()});
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape'&&ui.modal){closeModal();return}
+  if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.sidx!=null){e.preventDefault();var m=ui.modal;if(m&&m.steps){m.steps.splice(+e.target.dataset.sidx+1,0,{id:uid('s'),name:''});refreshStepsEditor(+e.target.dataset.sidx+1)}}
+});
 function goFull(){
   try{
     if(document.fullscreenElement){document.exitFullscreen();return}
