@@ -517,15 +517,20 @@ function openPersonView(pid,range){
   var byId={}; tasks().forEach(function(k){byId[k.id]=k});
   // history
   var dates=Object.keys(days).filter(function(d){return d>=from&&d<=t}).sort().reverse();
-  var total=0,count=0,hist='';
+  var total=0,count=0,hist='',split={};
+  // Anyone view: every completion of an "Anyone" chore (whoever did it) plus any check-off with no one credited
+  function inView(id,r){ if(!r) return false; if(pid!=='any') return r.by===pid; var k=byId[id]; return (k&&!personById(k.who))||!personById(r.by); }
   dates.forEach(function(d){
     var dd=days[d]; if(!dd||!dd.done) return;
-    var items=Object.keys(dd.done).filter(function(id){return creditedTo(dd.done[id],pid)}).map(function(id){return {id:id,r:dd.done[id],k:byId[id]}}).sort(function(a,b){return (b.r.at||0)-(a.r.at||0)});
+    var items=Object.keys(dd.done).filter(function(id){return inView(id,dd.done[id])}).map(function(id){return {id:id,r:dd.done[id],k:byId[id]}}).sort(function(a,b){return (b.r.at||0)-(a.r.at||0)});
     if(!items.length) return;
     var dayPts=0;
     var rows=items.map(function(it){var pts=recPts(it.r,it.id);dayPts+=pts;total+=pts;count++;
       var tm=it.r.at?new Date(it.r.at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';
-      return '<div class="hrow"><span class="ico">'+esc(it.k?it.k.icon:'\u2022')+'</span><span class="t"><b>'+esc(it.k?it.k.name:'(deleted chore)')+'</b><span>'+esc(tm)+'</span></span><span class="hp">+'+pts+'</span></div>'}).join('');
+      var whoTag='';
+      if(pid==='any'){ var bp=personById(it.r.by), wk=bp?bp.id:'none'; split[wk]=split[wk]||{n:bp?bp.name:'No one set',c:bp?bp.color:'#868E96',v:0,cnt:0}; split[wk].v+=pts; split[wk].cnt++;
+        whoTag='<span class="whotag" style="--wc:'+(bp?bp.color:'#868E96')+'">'+(bp?'\u2713 '+esc(bp.name):'No one set')+'</span>'; }
+      return '<div class="hrow"><span class="ico">'+esc(it.k?it.k.icon:'\u2022')+'</span><span class="t"><b>'+esc(it.k?it.k.name:'(deleted chore)')+'</b><span>'+esc(tm)+'</span></span>'+whoTag+'<span class="hp">+'+pts+'</span></div>'}).join('');
     hist+='<div class="hday"><div class="hday-h"><b>'+(d===t?'Today':d===addDays(t,-1)?'Yesterday':esc(fmtLong(d)))+'</b><span>'+items.length+' done \u00B7 '+ptsLabel(dayPts)+'</span></div>'+rows+'</div>';
   });
   if(!hist) hist='<div class="empty">Nothing checked off '+(range==='week'?'this week':range==='month'?'this month':'this year')+' yet.</div>';
@@ -540,6 +545,7 @@ function openPersonView(pid,range){
   var label={week:'This week',month:'This month',year:'This year'}[range];
   var h='<div class="scrim" data-action="scrim"><div class="sheet psheet"><div class="phead"><span class="pav" style="background:'+p.color+'">'+esc((p.name||'?').charAt(0).toUpperCase())+'</span><div><h2>'+esc(p.name)+'</h2><span class="muted">'+label+': <b>'+ptsLabel(total)+'</b> \u00B7 '+count+' chore'+(count===1?'':'s')+' done</span></div><button class="btn sm" data-action="close" style="margin-left:auto">Close</button></div>'+
     '<div class="seg" style="margin:4px 0 14px">'+['week','month','year'].map(function(r){return '<button type="button" data-action="prange" data-r="'+r+'" class="'+(r===range?'on':'')+'">'+{week:'Week',month:'Month',year:'Year'}[r]+'</button>'}).join('')+'</div>'+
+    (pid==='any'&&count?'<div class="splitrow">'+Object.keys(split).sort(function(a,b){return split[b].v-split[a].v}).map(function(k){var x=split[k];return '<span class="whotag big" style="--wc:'+x.c+'">'+esc(x.n)+': '+x.cnt+' done \u00B7 '+ptsLabel(x.v)+'</span>'}).join('')+'</div>'+(split.none?'<p class="muted small">\u201CNo one set\u201D means it was checked off on a device without \u201CThis device is\u201D picked, so nobody got the points.</p>':''):'')+
     '<h3 class="ph">Completed</h3>'+hist+
     (pid==='any'?'':'<h3 class="ph" style="margin-top:18px">Assigned chores'+(mine.length?' ('+mine.length+')':'')+'</h3>'+assigned)+
     (pid==='any'?'<h3 class="ph" style="margin-top:18px">Chores for anyone ('+mine.length+')</h3>'+(mine.length?grp('Every day',daily)+grp('Weekly',weekly)+grp('Every few weeks / months',intv):'<div class="empty">None</div>'):'')+
